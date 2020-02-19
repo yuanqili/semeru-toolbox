@@ -11,8 +11,8 @@ This script traces, for a process specified by `pid`,
 Below is an example output for tracing `mmtest.c`, whose `pid` is 22120.
 
 ```
-╭─yuanqili@thanos ~/tools/bpf-tools
-╰─$ sudo ./swapinout-simple.bt 22120
+╭─yuanqili@thanos ~/semeru-toolbox/bpf
+╰─$ sudo ./swapwatch.bt 22120
 
 Attaching 6 probes...
 time          major    minor       in      out
