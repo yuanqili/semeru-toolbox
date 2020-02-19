@@ -1,0 +1,29 @@
+#!/usr/bin/bpftrace
+#include <linux/mm.h>
+
+kprobe:handle_mm_fault
+{
+    @fault_addr[tid] = arg1;
+}
+
+kretprobe:handle_mm_fault /@fault_addr[tid]/
+{
+    if (retval & VM_FAULT_MAJOR) {
+        @major_fault += 1;
+    } else {
+        @minor_fault += 1;
+    }
+    @total_in++;
+    printf("in: 0x%llx\n", @fault_addr[tid]);
+}
+
+kprobe:try_to_unmap_one
+{
+    @total_out++;
+    printf("out: 0x%llx\n", arg2);
+}
+
+END
+{
+    clear(@fault_addr)
+}
