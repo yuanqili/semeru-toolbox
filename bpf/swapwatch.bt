@@ -1,12 +1,12 @@
 #!/usr/bin/bpftrace
 #include <linux/mm.h>
 
-kprobe:handle_mm_fault
+kprobe:handle_mm_fault /pid == $1/
 {
     @fault_addr[tid] = arg1;
 }
 
-kretprobe:handle_mm_fault /@fault_addr[tid]/
+kretprobe:handle_mm_fault /pid == $1 && @fault_addr[tid]/
 {
     if (retval & VM_FAULT_MAJOR) {
         @major_fault += 1;
@@ -14,16 +14,37 @@ kretprobe:handle_mm_fault /@fault_addr[tid]/
         @minor_fault += 1;
     }
     @total_in++;
-    printf("in: 0x%llx\n", @fault_addr[tid]);
+    // printf("in: 0x%llx\n", @fault_addr[tid]);
 }
 
-kprobe:try_to_unmap_one
+kprobe:try_to_unmap_one /pid == $1/
 {
     @total_out++;
-    printf("out: 0x%llx\n", arg2);
+    // printf("out: 0x%llx\n", arg2);
+}
+
+BEGIN
+{
+    printf("%-10s %8s %8s %8s %8s\n",
+           "time", "major", "minor", "in", "out");
 }
 
 END
 {
-    clear(@fault_addr)
+    clear(@fault_addr);
+    clear(@major_fault);
+    clear(@minor_fault);
+    clear(@total_in);
+    clear(@total_out);
+}
+
+interval:s:1
+{
+    time("%H:%M:%S");
+    printf("   %8d %8d %8d %8d\n",
+           @major_fault, @minor_fault, @total_in, @total_out);
+    clear(@major_fault);
+    clear(@minor_fault);
+    clear(@total_in);
+    clear(@total_out);
 }
