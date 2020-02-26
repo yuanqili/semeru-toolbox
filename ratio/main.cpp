@@ -13,6 +13,6 @@ int main(int argc, char **argv)
     auto addr_end = std::stol(argv[3], nullptr, 16);
 
     auto ratio = pages_inmem_ratio(pid, addr_start, addr_end);
-    std::cout << "ratio: " << ratio << std::endl;
+    std::cout << ratio << std::endl;
     return 0;
 }

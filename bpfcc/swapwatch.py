@@ -1,64 +1,87 @@
 #!/usr/bin/python3
-from time import sleep
+import argparse
+from collections import defaultdict
+from time import sleep, time
 
 from bcc import BPF
 
+from pyproc import ProcMonitor
+from utils import load_src
 
-def load_src(path, template):
-    with open(path) as f:
-        src = f.read()
-    for k, v in template.items():
-        src = src.replace(k, v)
-    return src
+
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-p', '--pid', type=int)
+    parser.add_argument('--page_bits', type=int, default=12, help='page size in bits')
+    parser.add_argument('--block_bits', type=int, default=28, help='block size in bits')
+    parser.add_argument('--interval', type=float, default=1, help='interval of printing')
+    return parser.parse_args()
 
 
 if __name__ == '__main__':
 
-    pid = 23119
-    address_block_bits = 30  # 28: 256MB, 30: 1GB
-    page_size_bits = 12      # 4KB
+    args = parse_args()
+
+    pid = args.pid
+    page_size_bits = args.page_bits
+    addr_block_bits = args.block_bits
+    interval = args.interval
+
     page_size = 2 ** page_size_bits
-    address_block_size = 2 ** address_block_bits
-    address_block_page_count = 2 ** (address_block_bits - page_size_bits)
+    addr_block_size = 2 ** addr_block_bits
+    addr_block_page_count = 2 ** (addr_block_bits - page_size_bits)
     template = {
         '{{FILTER_PID}}': 'if (pid != %d) {return 0;}' % pid,
-        '{{OFFSET}}': str(address_block_bits),
+        '{{OFFSET}}': str(addr_block_bits),
     }
+    default_stats = {'in': 0, 'out': 0, 'count': 0, 'ratio': 0}
 
+    # reads process address space information, which happened before starting monitoring
+    pm = ProcMonitor(pid)
+    smaps = pm.smaps()
+    page_stats_init = defaultdict(lambda: default_stats)
+    for item in smaps:
+        addr_block_start = item['address_start'] >> addr_block_bits << addr_block_bits
+        addr_block_end = item['address_end'] >> addr_block_bits << addr_block_bits
+        block_range = list(range(addr_block_start, addr_block_end + 1, addr_block_size))
+        for block in block_range:
+            if str(hex(block)) in page_stats_init:
+                continue
+            block_stat = pm.pagemap(block, block + addr_block_size)
+            page_stats_init[str(hex(block))] = block_stat
+            # print(hex(block), hex(block + addr_block_size), page_stats_init[str(hex(block))])
+
+    # loads BPF program and starts watching
     src_path = 'swapwatch.c'
     src_text = load_src(src_path, template)
-
     b = BPF(text=src_text)
     print(f'Attached to kernel')
 
     while True:
+        page_stats = defaultdict(lambda: default_stats)
 
         page_in = b.get_table('page_in')
-        page_in_stats = {}
         for address_space, count in page_in.items():
             address = str(hex(address_space.value))
-            page_in_stats[address] = count.value
+            page_stats[address]['in'] = count.value
 
         page_out = b.get_table('page_out')
-        page_out_stats = {}
         for address_space, count in page_out.items():
             address = str(hex(address_space.value))
-            page_out_stats[address] = count.value
+            page_stats[address]['out'] = count.value
 
-        page_stats = {}
-        for address, count in page_in_stats.items():
-            if not page_stats.get(address, None):
-                page_stats[address] = {}
-            page_stats[address]['in'] = count
-        for address, count in page_out_stats.items():
-            if not page_stats.get(address, None):
-                page_stats[address] = {}
-            page_stats[address]['out'] = count
-        for address in sorted(page_stats.keys()):
-            page_stats[address]['count'] = page_stats[address].get('in', 0) - page_stats[address].get('out', 0)
-            page_stats[address]['ratio'] = page_stats[address]['count'] / address_block_page_count
-            print(f'{address} '
-                  f'{page_stats[address]["count"]:8d} '
-                  f'{page_stats[address]["ratio"]*100:9.2f}')
+        print(time())
+        address_keys = sorted(list(page_stats.keys()) + list(page_stats_init.keys()))
+        for address in address_keys:
+            count = (page_stats[address]['in'] + page_stats_init[address]['in'] - page_stats[address]['out'])
+            ratio = max(count / addr_block_page_count, 0)  # TODO: total count is not accurate now
+            print(f'{address} {ratio:.6f}')
+            # print(f'{page_stats[address]["in"]} '
+            #       f'{page_stats_init[address]["in"]} '
+            #       f'{page_stats[address]["out"]} '
+            #       f'{page_stats_init[address]["out"]} '
+            #       f'count={count} '
+            #       f'ratio={ratio * 100:.2f}')
         print('-' * 32)
-        sleep(1)
+
+        sleep(interval)
