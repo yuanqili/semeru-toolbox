@@ -1,7 +1,7 @@
 #!/usr/bin/python3
 import argparse
 from collections import defaultdict
-from time import sleep, ctime
+from time import sleep
 
 from bcc import BPF
 
@@ -16,6 +16,23 @@ def parse_args():
     parser.add_argument('--block_bits', type=int, default=28, help='block size in bits')
     parser.add_argument('--interval', type=float, default=0.5, help='interval of printing')
     return parser.parse_args()
+
+
+def page_in_callback(cpu, data, size):
+    page_in = b['page_in'].event(data)
+    address = page_in.address >> addr_block_bits << addr_block_bits
+    page_stats[address]['in'] += 1
+
+
+def page_out_callback(cpu, data, size):
+    page_out = b['page_out'].event(data)
+    address = page_out.address >> addr_block_bits << addr_block_bits
+    page_stats[address]['out'] += 1
+
+
+def print_stats():
+    for addr, count in page_stats.items():
+        print(hex(addr), count)
 
 
 if __name__ == '__main__':
@@ -51,32 +68,21 @@ if __name__ == '__main__':
             page_stats_init[str(hex(block))] = block_stat
 
     # loads BPF program and starts watching
-    src_path = 'swapwatch.c'
+    src_path = 'swapsnoop_addronly.c'
     src_text = load_src(src_path, template)
     b = BPF(text=src_text)
     print(f'Attached to kernel')
 
+    page_stats = defaultdict(lambda: {'in': 0, 'out': 0})
+
+    b['page_in'].open_perf_buffer(page_in_callback)
+    b['page_out'].open_perf_buffer(page_out_callback)
+
     while True:
-        print(ctime())
-
-        page_stats_delta = {}
-        for addr, count in b['page_stats'].items():
-            page_stats_delta[str(hex(addr.value))] = {
-                'in': count.page_in,
-                'out': count.page_out
-            }
-
-        address_spaces = list(set(list(page_stats_delta.keys()) + list(page_stats_init.keys())))
-        address_spaces.sort()
-        for addr in address_spaces:
-            page_in_init = page_stats_init.get(addr, default_stats)['in']
-            page_out_init = page_stats_init.get(addr, default_stats)['out']
-            page_in_delta = page_stats_delta.get(addr, default_stats)['in']
-            page_out_delta = page_stats_delta.get(addr, default_stats)['out']
-            count = max(page_in_init + page_in_delta - page_out_delta, 0)
-            ratio = count / addr_block_page_count
-            print(f'{addr} {count:7d} {ratio * 100:8.4f}')
-
-        print('-' * 32)
-
-        sleep(interval)
+        try:
+            b.perf_buffer_poll()
+            print_stats()
+            print('-' * 32)
+            sleep(interval)
+        except KeyboardInterrupt:
+            exit()

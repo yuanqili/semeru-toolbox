@@ -1,11 +1,15 @@
 #include <linux/mm.h>
 
-
-struct page_counts {
-    u64 page_in;
-    u64 page_out;
+struct page_in_t {
+    u64 address;
 };
-BPF_HASH(page_stats, u64, struct page_counts);
+
+struct page_out_t {
+    u64 address;
+};
+
+BPF_PERF_OUTPUT(page_in);
+BPF_PERF_OUTPUT(page_out);
 
 int kprobe__handle_mm_fault(struct pt_regs *ctx,
                             struct vm_area_struct *vma,
@@ -15,15 +19,9 @@ int kprobe__handle_mm_fault(struct pt_regs *ctx,
     u32 pid = bpf_get_current_pid_tgid();
     {{FILTER_PID}}
 
-    u64 address_block;
-    u32 offset = {{OFFSET}};
-    address_block = address >> offset << offset;
-
-    struct page_counts *count, zero = {};
-    count = page_stats.lookup_or_try_init(&address_block, &zero);
-    if (count)
-        count->page_in += 1;
-
+    struct page_in_t stat = {};
+    stat.address = address;
+    page_in.perf_submit(ctx, &stat, sizeof(stat));
     return 0;
 }
 
@@ -36,14 +34,8 @@ int kprobe__try_to_unmap_one(struct pt_regs *ctx,
     u32 pid = bpf_get_current_pid_tgid();
     {{FILTER_PID}}
 
-    u64 address_block;
-    u32 offset = {{OFFSET}};
-    address_block = address >> offset << offset;
-
-    struct page_counts *count, zero = {};
-    count = page_stats.lookup_or_try_init(&address_block, &zero);
-    if (count)
-        count->page_out += 1;
-
+    struct page_out_t stat = {};
+    stat.address = address;
+    page_out.perf_submit(ctx, &stat, sizeof(stat));
     return 0;
 }
