@@ -77,7 +77,6 @@ if __name__ == '__main__':
         print('listening...')
         conn, client = sock.accept()
         print('accepted')
-        data = conn.recv(1024)
 
         print(ctime())
         ts = time()
