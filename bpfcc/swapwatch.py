@@ -1,7 +1,10 @@
 #!/usr/bin/python3
 import argparse
+import json
+import os
+import socket
 from collections import defaultdict
-from time import sleep, ctime
+from time import ctime, time
 
 from bcc import BPF
 
@@ -36,7 +39,10 @@ if __name__ == '__main__':
     }
     default_stats = {'in': 0, 'out': 0, 'count': 0, 'ratio': 0}
 
+    print(f'Attached to kernel')
+
     # reads process address space information, which happened before starting monitoring
+    print(f'Initializing...')
     pm = ProcMonitor(pid)
     smaps = pm.smaps()
     page_stats_init = defaultdict(lambda: default_stats)
@@ -54,10 +60,27 @@ if __name__ == '__main__':
     src_path = 'swapwatch.c'
     src_text = load_src(src_path, template)
     b = BPF(text=src_text)
-    print(f'Attached to kernel')
 
+    # creates domain socket and starts listening
+    server_address = f'/tmp/trace-{pid}.uds'
+    try:
+        os.unlink(server_address)
+    except OSError:
+        if os.path.exists(server_address):
+            raise
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.bind(server_address)
+    sock.listen(1)
+
+    print(f'Tracing...')
     while True:
+        print('listening...')
+        conn, client = sock.accept()
+        print('accepted')
+        data = conn.recv(1024)
+
         print(ctime())
+        ts = time()
 
         page_stats_delta = {}
         for addr, count in b['page_stats'].items():
@@ -65,9 +88,10 @@ if __name__ == '__main__':
                 'in': count.page_in,
                 'out': count.page_out
             }
-
         address_spaces = list(set(list(page_stats_delta.keys()) + list(page_stats_init.keys())))
         address_spaces.sort()
+
+        payload = {'ts': ts}
         for addr in address_spaces:
             page_in_init = page_stats_init.get(addr, default_stats)['in']
             page_out_init = page_stats_init.get(addr, default_stats)['out']
@@ -75,8 +99,11 @@ if __name__ == '__main__':
             page_out_delta = page_stats_delta.get(addr, default_stats)['out']
             count = max(page_in_init + page_in_delta - page_out_delta, 0)
             ratio = count / addr_block_page_count
+            payload[addr] = {
+                'count': count,
+                'ratio': ratio
+            }
             print(f'{addr} {count:7d} {ratio * 100:8.4f}')
-
         print('-' * 32)
 
-        sleep(interval)
+        conn.sendall(str.encode(json.dumps(payload)))
