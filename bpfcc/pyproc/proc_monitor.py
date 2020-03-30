@@ -78,9 +78,9 @@ class ProcMonitor:
                     smaps.append(mapping)
                     mapping = {}
                 try:
-                    address, permission, offset, dev, inode, pathname = line.split()
+                    address, permission, offset, dev, inode, pathname = line.split()[:6]
                 except ValueError:
-                    address, permission, offset, dev, inode = line.split()
+                    address, permission, offset, dev, inode = line.split()[:6]
                     pathname = ''
                 address_start, address_end = address.split('-')
                 mapping['pathname'] = pathname
@@ -107,9 +107,9 @@ class ProcMonitor:
         for line in maps_data:
             mapping = {}
             try:
-                address, permission, offset, dev, inode, pathname = line.split()
+                address, permission, offset, dev, inode, pathname = line.split()[:6]
             except ValueError:
-                address, permission, offset, dev, inode = line.split()
+                address, permission, offset, dev, inode = line.split()[:6]
                 pathname = ''
             address_start, address_end = address.split('-')
             mapping['pathname'] = pathname
